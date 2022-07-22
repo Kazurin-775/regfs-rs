@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Mutex};
 use anyhow::Context;
 use uuid::Uuid;
 use windows::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, E_INVALIDARG, E_OUTOFMEMORY, S_OK, BOOLEAN},
+    Foundation::{BOOLEAN, ERROR_FILE_NOT_FOUND, E_INVALIDARG, E_OUTOFMEMORY, S_OK},
     Storage::ProjectedFileSystem::*,
 };
 
@@ -15,8 +15,10 @@ pub struct SimpleFs {
 
 struct SimpleFsState {
     instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
-    dir_enums: HashMap<Uuid, SimpleDirEnumerator<std::iter::Once<(&'static str, Option<u32>)>>>,
+    dir_enums: HashMap<Uuid, DirEnumerator>,
 }
+
+type DirEnumerator = SimpleDirEnumerator<std::iter::Once<(&'static str, Option<u32>)>>;
 
 const FILE_CONTENTS: &str = "Hello, Windows 10 projected FS!\r\n";
 
@@ -28,6 +30,13 @@ impl SimpleFs {
                 dir_enums: HashMap::new(),
             }),
         }
+    }
+
+    fn enum_root_dir() -> DirEnumerator {
+        SimpleDirEnumerator::new(std::iter::once((
+            "Hello.txt",
+            Some(FILE_CONTENTS.len() as u32),
+        )))
     }
 }
 
@@ -44,13 +53,11 @@ impl ProjFsBackend for SimpleFs {
         _callback_data: &PRJ_CALLBACK_DATA,
         enumeration_id: Uuid,
     ) -> windows::core::HRESULT {
-        self.state.lock().unwrap().dir_enums.insert(
-            enumeration_id,
-            SimpleDirEnumerator::new(std::iter::once((
-                "Hello.txt",
-                Some(FILE_CONTENTS.len() as u32),
-            ))),
-        );
+        self.state
+            .lock()
+            .unwrap()
+            .dir_enums
+            .insert(enumeration_id, Self::enum_root_dir());
         S_OK
     }
 
