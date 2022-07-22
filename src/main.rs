@@ -1,4 +1,5 @@
 mod dir_enum;
+mod fs_helper;
 mod projfs;
 mod simple_fs;
 

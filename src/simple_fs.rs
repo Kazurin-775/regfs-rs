@@ -3,18 +3,18 @@ use std::{collections::HashMap, sync::Mutex};
 use anyhow::Context;
 use uuid::Uuid;
 use windows::Win32::{
-    Foundation::{BOOLEAN, ERROR_FILE_NOT_FOUND, E_INVALIDARG, E_OUTOFMEMORY, S_OK},
+    Foundation::{ERROR_FILE_NOT_FOUND, E_FAIL, E_INVALIDARG, S_OK},
     Storage::ProjectedFileSystem::*,
 };
 
-use crate::{dir_enum::SimpleDirEnumerator, projfs::ProjFsBackend};
+use crate::{dir_enum::SimpleDirEnumerator, fs_helper::SimpleFsHelper, projfs::ProjFsBackend};
 
 pub struct SimpleFs {
     state: Mutex<SimpleFsState>,
 }
 
 struct SimpleFsState {
-    instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
+    fs_helper: SimpleFsHelper,
     dir_enums: HashMap<Uuid, DirEnumerator>,
 }
 
@@ -26,7 +26,7 @@ impl SimpleFs {
     pub fn new() -> SimpleFs {
         SimpleFs {
             state: Mutex::new(SimpleFsState {
-                instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT::default(),
+                fs_helper: SimpleFsHelper::default(),
                 dir_enums: HashMap::new(),
             }),
         }
@@ -45,7 +45,7 @@ impl ProjFsBackend for SimpleFs {
         self: &std::sync::Arc<Self>,
         instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
     ) {
-        self.state.lock().unwrap().instance_handle = instance_handle;
+        self.state.lock().unwrap().fs_helper = SimpleFsHelper::new(instance_handle);
     }
 
     unsafe fn start_dir_enum(
@@ -98,40 +98,26 @@ impl ProjFsBackend for SimpleFs {
     ) -> windows::core::HRESULT {
         let state = self.state.lock().unwrap();
         let result = (|| {
-            if !callback_data
-                .FilePathName
-                .to_string()
-                .ok()
-                .as_ref()
-                .map(|s| s == "Hello.txt")
-                .unwrap_or(false)
-            {
+            let path = state
+                .fs_helper
+                .get_req_path(callback_data)
+                .context("invalid path specified")?;
+            if path != "Hello.txt" {
                 return anyhow::Ok(ERROR_FILE_NOT_FOUND.to_hresult());
             }
 
-            let placeholder_info = PRJ_PLACEHOLDER_INFO {
-                FileBasicInfo: PRJ_FILE_BASIC_INFO {
-                    IsDirectory: BOOLEAN(0),
-                    FileSize: FILE_CONTENTS.len() as i64,
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
+            state
+                .fs_helper
+                .write_placeholder_info(callback_data, Some(FILE_CONTENTS.len() as i64))
+                .context("write placeholder info")?;
 
-            PrjWritePlaceholderInfo(
-                state.instance_handle,
-                callback_data.FilePathName,
-                &placeholder_info,
-                std::mem::size_of::<PRJ_PLACEHOLDER_INFO>() as u32,
-            )
-            .context("write placeholder info")?;
             anyhow::Ok(S_OK)
         })();
         match result {
             Ok(hresult) => hresult,
             Err(err) => {
                 eprintln!("Error in get_file_data: {:#}", err);
-                E_INVALIDARG
+                E_FAIL
             }
         }
     }
@@ -144,36 +130,33 @@ impl ProjFsBackend for SimpleFs {
     ) -> windows::core::HRESULT {
         let state = self.state.lock().unwrap();
         let result = (|| {
-            if !callback_data
-                .FilePathName
-                .to_string()
-                .ok()
-                .as_ref()
-                .map(|s| s == "Hello.txt")
-                .unwrap_or(false)
-            {
+            let path = state
+                .fs_helper
+                .get_req_path(callback_data)
+                .context("invalid path specified")?;
+            if path != "Hello.txt" {
                 return anyhow::Ok(ERROR_FILE_NOT_FOUND.to_hresult());
             }
 
-            let length = length.min(FILE_CONTENTS.len() as u32);
-            let buffer = PrjAllocateAlignedBuffer(state.instance_handle, length as usize);
-            if buffer.is_null() {
-                return anyhow::Ok(E_OUTOFMEMORY);
-            }
-
-            std::slice::from_raw_parts_mut(buffer as *mut u8, length as usize)
-                .copy_from_slice(FILE_CONTENTS[..length as usize].as_bytes());
-
-            PrjWriteFileData(
-                state.instance_handle,
-                &callback_data.DataStreamId,
-                buffer,
-                byte_offset,
-                length,
-            )
-            .context("write file data")?;
-
-            PrjFreeAlignedBuffer(buffer);
+            // The provider is allowed to provide more bytes than expected,
+            // since the data provided will be written to the underlying
+            // storage device.
+            // Here, we simply provide all of the data to the backend,
+            // eliminating the need to compute positions and buffer sizes.
+            // This also helps us avoid some unnecessary complications such
+            // as buffer alignments.
+            // For more details, see PrjWriteFileData's documentation.
+            assert!(byte_offset + length as u64 <= FILE_CONTENTS.len() as u64);
+            let length = FILE_CONTENTS.len();
+            let mut buffer = state
+                .fs_helper
+                .alloc_aligned_buffer(length)
+                .context("allocate buffer")?;
+            buffer.copy_from_slice(FILE_CONTENTS.as_bytes());
+            state
+                .fs_helper
+                .write_file_data(callback_data, &buffer, 0)
+                .context("write file data")?;
 
             anyhow::Ok(S_OK)
         })();
@@ -181,7 +164,7 @@ impl ProjFsBackend for SimpleFs {
             Ok(hresult) => hresult,
             Err(err) => {
                 eprintln!("Error in get_file_data: {:#}", err);
-                E_INVALIDARG
+                E_FAIL
             }
         }
     }
