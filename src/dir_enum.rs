@@ -16,9 +16,10 @@ where
     start: I,
 }
 
-impl<'a, I> SimpleDirEnumerator<I>
+impl<'a, I, S> SimpleDirEnumerator<I>
 where
-    I: Iterator<Item = (&'a str, Option<u32>)> + Clone,
+    I: Iterator<Item = (S, Option<u32>)> + Clone,
+    S: AsRef<str>,
 {
     pub fn new(iter: I) -> SimpleDirEnumerator<I> {
         SimpleDirEnumerator {
@@ -37,13 +38,13 @@ where
             self.cur = self.start.clone().peekable();
         }
 
-        while let Some((name, len)) = self.cur.peek().copied() {
-            let name: Vec<u16> = OsStr::new(name)
+        while let Some((name, len)) = self.cur.peek().as_ref() {
+            let name_wstr: Vec<u16> = OsStr::new(name.as_ref())
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
             // Check if the file name matches the search condition
-            if PrjFileNameMatch(PCWSTR::from_raw(name.as_ptr()), search_expr).0 == 0 {
+            if PrjFileNameMatch(PCWSTR::from_raw(name_wstr.as_ptr()), search_expr).0 == 0 {
                 self.cur.next();
                 continue;
             }
@@ -55,7 +56,7 @@ where
             };
 
             match PrjFillDirEntryBuffer(
-                PCWSTR::from_raw(name.as_ptr()),
+                PCWSTR::from_raw(name_wstr.as_ptr()),
                 &file_info,
                 dir_entry_buffer_handle,
             ) {
@@ -68,8 +69,17 @@ where
                     log::debug!("Directory entry buffer full");
                     break;
                 }
-                // PrjFillDirEntryBuffer should only return one kind of error
-                _ => unreachable!(),
+                Err(err) => {
+                    // This branch will be reached if the file name supplied is
+                    // invalid, such as when the file name contains '*' or '/'.
+                    log::warn!(
+                        "Failed to fill directory entry buffer for {:?}: {}",
+                        name.as_ref(),
+                        err,
+                    );
+                    // Skip this item.
+                    self.cur.next();
+                }
             }
         }
     }
