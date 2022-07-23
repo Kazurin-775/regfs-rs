@@ -1,12 +1,14 @@
 mod dir_enum;
 mod fs_helper;
 mod projfs;
+mod reg_ops;
+mod regfs;
+#[allow(unused)]
 mod simple_fs;
 
 use std::path::PathBuf;
 
 use projfs::ProjFs;
-use simple_fs::SimpleFs;
 use windows::{core::PCWSTR, Win32::Storage::ProjectedFileSystem::*};
 
 fn main() {
@@ -32,7 +34,7 @@ fn main() {
         NotificationMappingsCount: 1,
     };
 
-    let mut proj_fs = ProjFs::new(root_path, opts, SimpleFs::new());
+    let mut proj_fs = ProjFs::new(root_path, opts, regfs::RegFs::new());
     proj_fs
         .start()
         .expect("failed to start projection file system");
