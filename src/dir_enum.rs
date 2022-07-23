@@ -16,7 +16,7 @@ where
     start: I,
 }
 
-impl<'a, I, S> SimpleDirEnumerator<I>
+impl<I, S> SimpleDirEnumerator<I>
 where
     I: Iterator<Item = (S, Option<u32>)> + Clone,
     S: AsRef<str>,

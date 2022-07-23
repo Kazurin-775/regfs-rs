@@ -25,11 +25,7 @@ fn open_key_internal(hkey: &str, path: &str) -> Result<Option<RegKey>, windows::
             Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
             Err(err) => {
                 log::warn!("Failed to open key {:?}: {}", path, err);
-                Err(err
-                    .raw_os_error()
-                    .map(|code| HRESULT(code))
-                    .unwrap_or(E_FAIL)
-                    .into())
+                Err(err.raw_os_error().map(HRESULT).unwrap_or(E_FAIL).into())
             }
         }
     } else {
@@ -71,11 +67,7 @@ pub fn read_value(path: &str) -> windows::core::Result<Option<RegValue>> {
                 Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
                 Err(err) => {
                     log::warn!("Failed to read value {:?}: {}", path, err);
-                    Err(err
-                        .raw_os_error()
-                        .map(|code| HRESULT(code))
-                        .unwrap_or(E_FAIL)
-                        .into())
+                    Err(err.raw_os_error().map(HRESULT).unwrap_or(E_FAIL).into())
                 }
             }
         } else {
