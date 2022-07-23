@@ -1,4 +1,7 @@
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Context;
 use uuid::Uuid;
@@ -45,7 +48,7 @@ impl SimpleFs {
 
 impl ProjFsBackend for SimpleFs {
     fn set_instance_handle(
-        self: &std::sync::Arc<Self>,
+        self: &Arc<Self>,
         instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
     ) {
         log::debug!("Simple FS backend initialized");
@@ -53,7 +56,7 @@ impl ProjFsBackend for SimpleFs {
     }
 
     unsafe fn start_dir_enum(
-        self: &std::sync::Arc<Self>,
+        self: &Arc<Self>,
         callback_data: &PRJ_CALLBACK_DATA,
         enumeration_id: Uuid,
     ) -> windows::core::HRESULT {
@@ -71,7 +74,7 @@ impl ProjFsBackend for SimpleFs {
     }
 
     unsafe fn end_dir_enum(
-        self: &std::sync::Arc<Self>,
+        self: &Arc<Self>,
         _callback_data: &PRJ_CALLBACK_DATA,
         enumeration_id: Uuid,
     ) -> windows::core::HRESULT {
@@ -81,7 +84,7 @@ impl ProjFsBackend for SimpleFs {
     }
 
     unsafe fn get_dir_enum(
-        self: &std::sync::Arc<Self>,
+        self: &Arc<Self>,
         callback_data: &PRJ_CALLBACK_DATA,
         enumeration_id: Uuid,
         search_expr: windows::core::PCWSTR,
@@ -109,7 +112,7 @@ impl ProjFsBackend for SimpleFs {
     }
 
     unsafe fn get_placeholder_info(
-        self: &std::sync::Arc<Self>,
+        self: &Arc<Self>,
         callback_data: &PRJ_CALLBACK_DATA,
     ) -> windows::core::HRESULT {
         let state = self.state.lock().unwrap();
@@ -133,14 +136,16 @@ impl ProjFsBackend for SimpleFs {
         match result {
             Ok(hresult) => hresult,
             Err(err) => {
-                log::error!("Error in get_file_data: {:#}", err);
-                E_FAIL
+                log::error!("Error in get_placeholder_info: {:#}", err);
+                err.downcast::<windows::core::Error>()
+                    .map(Into::into)
+                    .unwrap_or(E_FAIL)
             }
         }
     }
 
     unsafe fn get_file_data(
-        self: &std::sync::Arc<Self>,
+        self: &Arc<Self>,
         callback_data: &PRJ_CALLBACK_DATA,
         byte_offset: u64,
         length: u32,
@@ -186,8 +191,10 @@ impl ProjFsBackend for SimpleFs {
         match result {
             Ok(hresult) => hresult,
             Err(err) => {
-                eprintln!("Error in get_file_data: {:#}", err);
-                E_FAIL
+                log::error!("Error in get_file_data: {:#}", err);
+                err.downcast::<windows::core::Error>()
+                    .map(Into::into)
+                    .unwrap_or(E_FAIL)
             }
         }
     }
