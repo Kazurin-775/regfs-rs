@@ -120,6 +120,7 @@ where
                 // This directory is newly created. Create a UUID for this
                 // directory, and write it to a file named .projfs-id.
                 let instance_id = Uuid::new_v4();
+                log::debug!("Created new instance ID {}", instance_id);
                 std::fs::write(
                     self.root_path.join(INSTANCE_ID_FILE),
                     instance_id.as_bytes(),
@@ -142,8 +143,9 @@ where
             Err(e) if e.kind() == ErrorKind::AlreadyExists => {
                 let instance_id = std::fs::read(self.root_path.join(INSTANCE_ID_FILE))
                     .context("read instance ID file")?;
-                let _instance_id = Uuid::from_slice(&instance_id).context("parse instance ID")?;
-                // TODO: do something with _instance_id
+                let instance_id = Uuid::from_slice(&instance_id).context("parse instance ID")?;
+                log::debug!("Found old instance ID {}", instance_id);
+                // TODO: do something with instance_id
                 Ok(())
             }
             result => result.context("create virtualization root"),
@@ -225,6 +227,7 @@ where
             );
         }
 
+        log::debug!("Stopping projection FS");
         unsafe {
             PrjStopVirtualizing(self.instance_handle);
         }

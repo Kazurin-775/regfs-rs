@@ -65,6 +65,7 @@ where
                 Err(err) if err.code() == ERROR_INSUFFICIENT_BUFFER.to_hresult() => {
                     // The dir_entry_buffer is full, stop so that the client
                     // can process the items in the buffer.
+                    log::debug!("Directory entry buffer full");
                     break;
                 }
                 // PrjFillDirEntryBuffer should only return one kind of error

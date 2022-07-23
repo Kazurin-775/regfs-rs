@@ -10,6 +10,8 @@ use simple_fs::SimpleFs;
 use windows::{core::PCWSTR, Win32::Storage::ProjectedFileSystem::*};
 
 fn main() {
+    env_logger::init();
+
     let mut args = std::env::args_os();
     if args.len() != 2 {
         eprintln!("Usage: regfs-rs.exe <Virtualization Root Path>");

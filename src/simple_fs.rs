@@ -2,9 +2,12 @@ use std::{collections::HashMap, sync::Mutex};
 
 use anyhow::Context;
 use uuid::Uuid;
-use windows::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, E_FAIL, E_INVALIDARG, S_OK},
-    Storage::ProjectedFileSystem::*,
+use windows::{
+    core::PCWSTR,
+    Win32::{
+        Foundation::{ERROR_FILE_NOT_FOUND, E_FAIL, E_INVALIDARG, S_OK},
+        Storage::ProjectedFileSystem::*,
+    },
 };
 
 use crate::{dir_enum::SimpleDirEnumerator, fs_helper::SimpleFsHelper, projfs::ProjFsBackend};
@@ -45,14 +48,20 @@ impl ProjFsBackend for SimpleFs {
         self: &std::sync::Arc<Self>,
         instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
     ) {
+        log::debug!("Simple FS backend initialized");
         self.state.lock().unwrap().fs_helper = SimpleFsHelper::new(instance_handle);
     }
 
     unsafe fn start_dir_enum(
         self: &std::sync::Arc<Self>,
-        _callback_data: &PRJ_CALLBACK_DATA,
+        callback_data: &PRJ_CALLBACK_DATA,
         enumeration_id: Uuid,
     ) -> windows::core::HRESULT {
+        log::trace!(
+            "Start directory enumeration: ID {}, path {:?}",
+            enumeration_id,
+            callback_data.FilePathName.to_string(),
+        );
         self.state
             .lock()
             .unwrap()
@@ -66,6 +75,7 @@ impl ProjFsBackend for SimpleFs {
         _callback_data: &PRJ_CALLBACK_DATA,
         enumeration_id: Uuid,
     ) -> windows::core::HRESULT {
+        log::trace!("End directory enumeration: ID {}", enumeration_id);
         self.state.lock().unwrap().dir_enums.remove(&enumeration_id);
         S_OK
     }
@@ -77,6 +87,12 @@ impl ProjFsBackend for SimpleFs {
         search_expr: windows::core::PCWSTR,
         dir_entry_buffer_handle: PRJ_DIR_ENTRY_BUFFER_HANDLE,
     ) -> windows::core::HRESULT {
+        log::trace!(
+            "Get directory enumeration: ID {}, path {:?}, search {:?}",
+            enumeration_id,
+            callback_data.FilePathName.to_string(),
+            Option::<PCWSTR>::from(search_expr).map(|p| p.to_string()),
+        );
         match self
             .state
             .lock()
@@ -102,6 +118,7 @@ impl ProjFsBackend for SimpleFs {
                 .fs_helper
                 .get_req_path(callback_data)
                 .context("invalid path specified")?;
+            log::trace!("Get placeholder info: {:?}", path);
             if path != "Hello.txt" {
                 return anyhow::Ok(ERROR_FILE_NOT_FOUND.to_hresult());
             }
@@ -116,7 +133,7 @@ impl ProjFsBackend for SimpleFs {
         match result {
             Ok(hresult) => hresult,
             Err(err) => {
-                eprintln!("Error in get_file_data: {:#}", err);
+                log::error!("Error in get_file_data: {:#}", err);
                 E_FAIL
             }
         }
@@ -134,6 +151,12 @@ impl ProjFsBackend for SimpleFs {
                 .fs_helper
                 .get_req_path(callback_data)
                 .context("invalid path specified")?;
+            log::trace!(
+                "Get file data: {:?}; offset {}, len {}",
+                path,
+                byte_offset,
+                length,
+            );
             if path != "Hello.txt" {
                 return anyhow::Ok(ERROR_FILE_NOT_FOUND.to_hresult());
             }
