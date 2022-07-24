@@ -13,7 +13,11 @@ use windows::{
     },
 };
 
-use crate::{dir_enum::SimpleDirEnumerator, fs_helper::SimpleFsHelper, projfs::ProjFsBackend};
+use crate::{
+    dir_enum::SimpleDirEnumerator,
+    fs_helper::SimpleFsHelper,
+    projfs::{NotificationKind, ProjFsBackend},
+};
 
 pub struct SimpleFs {
     state: Mutex<SimpleFsState>,
@@ -47,6 +51,10 @@ impl SimpleFs {
 }
 
 impl ProjFsBackend for SimpleFs {
+    fn get_optional_features() -> crate::projfs::OptionalFeatures {
+        crate::projfs::OptionalFeatures::empty()
+    }
+
     fn set_instance_handle(
         self: &Arc<Self>,
         instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
@@ -197,5 +205,16 @@ impl ProjFsBackend for SimpleFs {
                     .unwrap_or(E_FAIL)
             }
         }
+    }
+
+    unsafe fn notify(
+        self: &Arc<Self>,
+        _callback_data: &PRJ_CALLBACK_DATA,
+        _is_dir: bool,
+        _kind: NotificationKind,
+        _dest_filename: PCWSTR,
+        _params: *mut PRJ_NOTIFICATION_PARAMETERS,
+    ) -> windows::core::HRESULT {
+        unreachable!()
     }
 }

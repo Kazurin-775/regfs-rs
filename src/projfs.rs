@@ -4,7 +4,7 @@ use anyhow::Context;
 use uuid::Uuid;
 use windows::{
     core::{GUID, HRESULT, PCWSTR},
-    Win32::Storage::ProjectedFileSystem::*,
+    Win32::{Foundation::BOOLEAN, Storage::ProjectedFileSystem::*},
 };
 
 pub struct ProjFs<B>
@@ -20,6 +20,8 @@ where
 }
 
 pub trait ProjFsBackend: Send + Sync {
+    fn get_optional_features() -> OptionalFeatures;
+
     fn set_instance_handle(self: &Arc<Self>, instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT);
 
     unsafe fn start_dir_enum(
@@ -50,6 +52,15 @@ pub trait ProjFsBackend: Send + Sync {
         byte_offset: u64,
         length: u32,
     ) -> HRESULT;
+
+    unsafe fn notify(
+        self: &Arc<Self>,
+        callback_data: &PRJ_CALLBACK_DATA,
+        is_dir: bool,
+        kind: NotificationKind,
+        dest_filename: PCWSTR,
+        params: *mut PRJ_NOTIFICATION_PARAMETERS,
+    ) -> HRESULT;
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -57,6 +68,30 @@ enum FsState {
     Ready,
     Running,
     Stopped,
+}
+
+bitflags::bitflags! {
+    pub struct OptionalFeatures: u32 {
+        const NOTIFY = 1;
+        const QUERY_FILE_NAME = 2;
+        const CANCEL_COMMAND = 4;
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotificationKind {
+    FileOpened,
+    NewFileCreated,
+    FileOverwritten,
+    PreDelete,
+    PreRename,
+    PreSetHardlink,
+    FileRenamed,
+    HardlinkCreated,
+    FileHandleClosedNoModification,
+    FileHandleClosedFileModified,
+    FileHandleClosedFileDeleted,
+    FilePreConvertToFull,
 }
 
 impl<B> ProjFs<B>
@@ -209,13 +244,37 @@ where
             backend::<B>(callback_data).get_file_data(&*callback_data, byte_offset, length)
         }
 
+        unsafe extern "system" fn notification_cb<B: ProjFsBackend>(
+            callback_data: *const PRJ_CALLBACK_DATA,
+            is_dir: BOOLEAN,
+            notification: PRJ_NOTIFICATION,
+            dest_filename: PCWSTR,
+            params: *mut PRJ_NOTIFICATION_PARAMETERS,
+        ) -> HRESULT {
+            backend::<B>(callback_data).notify(
+                &*callback_data,
+                is_dir.0 != 0,
+                notification.into(),
+                dest_filename,
+                params,
+            )
+        }
+
+        let features = B::get_optional_features();
+
         PRJ_CALLBACKS {
             StartDirectoryEnumerationCallback: Some(start_dir_enum_cb::<B>),
             EndDirectoryEnumerationCallback: Some(end_dir_enum_cb::<B>),
             GetDirectoryEnumerationCallback: Some(get_dir_enum_cb::<B>),
             GetPlaceholderInfoCallback: Some(get_placeholder_info_cb::<B>),
             GetFileDataCallback: Some(get_file_data_cb::<B>),
-            ..Default::default()
+            QueryFileNameCallback: None,
+            NotificationCallback: if features.contains(OptionalFeatures::NOTIFY) {
+                Some(notification_cb::<B>)
+            } else {
+                None
+            },
+            CancelCommandCallback: None,
         }
     }
 
@@ -242,6 +301,56 @@ where
     fn drop(&mut self) {
         if self.state == FsState::Running {
             self.stop();
+        }
+    }
+}
+
+impl From<PRJ_NOTIFICATION> for NotificationKind {
+    #[rustfmt::skip]
+    fn from(n: PRJ_NOTIFICATION) -> Self {
+        match n {
+            PRJ_NOTIFICATION_FILE_OPENED => Self::FileOpened,
+            PRJ_NOTIFICATION_NEW_FILE_CREATED => Self::NewFileCreated,
+            PRJ_NOTIFICATION_FILE_OVERWRITTEN => Self::FileOverwritten,
+            PRJ_NOTIFICATION_PRE_DELETE => Self::PreDelete,
+            PRJ_NOTIFICATION_PRE_RENAME => Self::PreRename,
+            PRJ_NOTIFICATION_PRE_SET_HARDLINK => Self::PreSetHardlink,
+            PRJ_NOTIFICATION_FILE_RENAMED => Self::FileRenamed,
+            PRJ_NOTIFICATION_HARDLINK_CREATED => Self::HardlinkCreated,
+            PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_NO_MODIFICATION =>
+                Self::FileHandleClosedNoModification,
+            PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED =>
+                Self::FileHandleClosedFileModified,
+            PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_DELETED =>
+                Self::FileHandleClosedFileDeleted,
+            PRJ_NOTIFICATION_FILE_PRE_CONVERT_TO_FULL =>
+                Self::FilePreConvertToFull,
+            other => panic!("unknown notification type: {}", other.0),
+        }
+    }
+}
+
+impl From<NotificationKind> for PRJ_NOTIFICATION {
+    #[rustfmt::skip]
+    fn from(n: NotificationKind) -> Self {
+        use NotificationKind as K;
+        match n {
+            K::FileOpened => PRJ_NOTIFICATION_FILE_OPENED,
+            K::NewFileCreated => PRJ_NOTIFICATION_NEW_FILE_CREATED,
+            K::FileOverwritten => PRJ_NOTIFICATION_FILE_OVERWRITTEN,
+            K::PreDelete => PRJ_NOTIFICATION_PRE_DELETE,
+            K::PreRename => PRJ_NOTIFICATION_PRE_RENAME,
+            K::PreSetHardlink => PRJ_NOTIFICATION_PRE_SET_HARDLINK,
+            K::FileRenamed => PRJ_NOTIFICATION_FILE_RENAMED,
+            K::HardlinkCreated => PRJ_NOTIFICATION_HARDLINK_CREATED,
+            K::FileHandleClosedNoModification =>
+                PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_NO_MODIFICATION,
+            K::FileHandleClosedFileModified =>
+                PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_MODIFIED,
+            K::FileHandleClosedFileDeleted =>
+                PRJ_NOTIFICATION_FILE_HANDLE_CLOSED_FILE_DELETED,
+            K::FilePreConvertToFull =>
+                PRJ_NOTIFICATION_FILE_PRE_CONVERT_TO_FULL,
         }
     }
 }

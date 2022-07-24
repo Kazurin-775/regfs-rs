@@ -7,12 +7,17 @@ use anyhow::Context;
 use itertools::Itertools;
 use uuid::Uuid;
 use windows::Win32::{
-    Foundation::{ERROR_FILE_NOT_FOUND, E_FAIL, E_INVALIDARG, S_OK},
+    Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_FILE_NOT_FOUND, E_FAIL, E_INVALIDARG, STATUS_CANNOT_DELETE, S_OK,
+    },
     Storage::ProjectedFileSystem::*,
 };
 
 use crate::{
-    dir_enum::SimpleDirEnumerator, fs_helper::SimpleFsHelper, projfs::ProjFsBackend, reg_ops,
+    dir_enum::SimpleDirEnumerator,
+    fs_helper::SimpleFsHelper,
+    projfs::{NotificationKind, OptionalFeatures, ProjFsBackend},
+    reg_ops,
 };
 
 pub struct RegFs {
@@ -38,6 +43,10 @@ impl RegFs {
 }
 
 impl ProjFsBackend for RegFs {
+    fn get_optional_features() -> OptionalFeatures {
+        OptionalFeatures::NOTIFY
+    }
+
     fn set_instance_handle(
         self: &Arc<Self>,
         instance_handle: PRJ_NAMESPACE_VIRTUALIZATION_CONTEXT,
@@ -226,5 +235,58 @@ impl ProjFsBackend for RegFs {
                     .unwrap_or(E_FAIL)
             }
         }
+    }
+
+    unsafe fn notify(
+        self: &Arc<Self>,
+        callback_data: &PRJ_CALLBACK_DATA,
+        _is_dir: bool,
+        kind: NotificationKind,
+        dest_filename: windows::core::PCWSTR,
+        _params: *mut PRJ_NOTIFICATION_PARAMETERS,
+    ) -> windows::core::HRESULT {
+        match kind {
+            NotificationKind::FileOpened => (),
+            NotificationKind::NewFileCreated => {
+                log::debug!(
+                    "New file created: {:?}",
+                    callback_data.FilePathName.to_string(),
+                );
+            }
+            NotificationKind::FileOverwritten | NotificationKind::FileHandleClosedFileModified => {
+                log::debug!(
+                    "File modified: {:?}",
+                    callback_data.FilePathName.to_string(),
+                );
+            }
+            NotificationKind::FileRenamed => {
+                log::debug!(
+                    "File renamed: {:?} -> {:?}",
+                    callback_data.FilePathName.to_string(),
+                    dest_filename.to_string(),
+                );
+            }
+            NotificationKind::FileHandleClosedFileDeleted => {
+                log::debug!("File deleted: {:?}", callback_data.FilePathName.to_string());
+            }
+            NotificationKind::PreDelete => {
+                log::debug!(
+                    "Denying file deletion: {:?}",
+                    callback_data.FilePathName.to_string(),
+                );
+                return ERROR_ACCESS_DENIED.to_hresult();
+            }
+            NotificationKind::PreRename => {
+                log::debug!(
+                    "Denying file rename: {:?}",
+                    callback_data.FilePathName.to_string(),
+                );
+                return STATUS_CANNOT_DELETE.to_hresult();
+            }
+            other => {
+                log::warn!("Unknown notification kind: {:?}", other);
+            }
+        }
+        S_OK
     }
 }
