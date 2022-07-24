@@ -79,8 +79,7 @@ impl ProjFsBackend for RegFs {
                     reg_ops::HKEYS
                         .keys()
                         .map(|&name| (String::from(name), None))
-                        .collect::<Vec<_>>()
-                        .into_iter(),
+                        .sorted_unstable(),
                 )
             } else if let Some(key) = reg_ops::open_key(&path).context("open key")? {
                 // Enumerate both subkeys and values
