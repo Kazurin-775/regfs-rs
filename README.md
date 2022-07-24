@@ -21,3 +21,5 @@ Note that several quirks exist in this project, due to the project's simplified 
 - Keys or values whose names end with `.` may not be accessible (may result in an error when accessed).
 - Most file attributes (creation / modification time, security attributes, etc.) are not present; specifically, only file names and sizes are supplied.
 - If the program is run multiple times, multiple instances of a same file / directory may show up in the directory listings (probably due to the absence of correct file attributes).
+
+Due to the lack of write support, any changes made to the file system will not be reflected in the system registry. It may be non-trivial to add write support to the current implementation.
